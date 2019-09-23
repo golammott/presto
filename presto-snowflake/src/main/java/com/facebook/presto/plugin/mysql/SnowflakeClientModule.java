@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.plugin.mysql;
+package com.facebook.presto.plugin.snowflake;
 
 import com.facebook.presto.plugin.jdbc.BaseJdbcConfig;
 import com.facebook.presto.plugin.jdbc.JdbcClient;
@@ -26,15 +26,15 @@ import java.util.Properties;
 import static com.google.common.base.Preconditions.checkArgument;
 import static io.airlift.configuration.ConfigBinder.configBinder;
 
-public class MySqlClientModule
+public class SnowflakeClientModule
         extends AbstractConfigurationAwareModule
 {
     @Override
     protected void setup(Binder binder)
     {
-        binder.bind(JdbcClient.class).to(MySqlClient.class).in(Scopes.SINGLETON);
+        binder.bind(JdbcClient.class).to(SnowflakeClient.class).in(Scopes.SINGLETON);
         ensureCatalogIsEmpty(buildConfigObject(BaseJdbcConfig.class).getConnectionUrl());
-        configBinder(binder).bindConfig(MySqlConfig.class);
+        configBinder(binder).bindConfig(SnowflakeClient.class);
     }
 
     private static void ensureCatalogIsEmpty(String connectionUrl)

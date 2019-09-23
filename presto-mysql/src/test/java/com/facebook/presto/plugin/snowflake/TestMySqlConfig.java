@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.plugin.mysql;
+package com.facebook.presto.plugin.snowflake;
 
 import com.google.common.collect.ImmutableMap;
 import io.airlift.units.Duration;

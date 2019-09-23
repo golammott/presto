@@ -11,7 +11,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.facebook.presto.plugin.mysql;
+package com.facebook.presto.plugin.snowflake;
 
 import com.facebook.presto.plugin.jdbc.BaseJdbcClient;
 import com.facebook.presto.plugin.jdbc.BaseJdbcConfig;
@@ -58,17 +58,17 @@ import static com.mysql.jdbc.SQLError.SQL_STATE_SYNTAX_ERROR;
 import static java.lang.String.format;
 import static java.util.Locale.ENGLISH;
 
-public class MySqlClient
+public class SnowflakeClient
         extends BaseJdbcClient
 {
     @Inject
-    public MySqlClient(JdbcConnectorId connectorId, BaseJdbcConfig config, MySqlConfig mySqlConfig)
+    public SnowflakeClient(JdbcConnectorId connectorId, BaseJdbcConfig config, SnowflakeConfig snowflakeConfig)
             throws SQLException
     {
-        super(connectorId, config, "`", connectionFactory(config, mySqlConfig));
+        super(connectorId, config, "`", connectionFactory(config, snowflakeConfig));
     }
 
-    private static ConnectionFactory connectionFactory(BaseJdbcConfig config, MySqlConfig mySqlConfig)
+    private static ConnectionFactory connectionFactory(BaseJdbcConfig config, SnowflakeConfig snowflakeConfig)
             throws SQLException
     {
         Properties connectionProperties = basicConnectionProperties(config);
@@ -77,12 +77,12 @@ public class MySqlClient
         connectionProperties.setProperty("useUnicode", "true");
         connectionProperties.setProperty("characterEncoding", "utf8");
         connectionProperties.setProperty("tinyInt1isBit", "false");
-        if (mySqlConfig.isAutoReconnect()) {
-            connectionProperties.setProperty("autoReconnect", String.valueOf(mySqlConfig.isAutoReconnect()));
-            connectionProperties.setProperty("maxReconnects", String.valueOf(mySqlConfig.getMaxReconnects()));
+        if (snowflakeConfig.isAutoReconnect()) {
+            connectionProperties.setProperty("autoReconnect", String.valueOf(snowflakeConfig.isAutoReconnect()));
+            connectionProperties.setProperty("maxReconnects", String.valueOf(snowflakeConfig.getMaxReconnects()));
         }
-        if (mySqlConfig.getConnectionTimeout() != null) {
-            connectionProperties.setProperty("connectTimeout", String.valueOf(mySqlConfig.getConnectionTimeout().toMillis()));
+        if (snowflakeConfig.getConnectionTimeout() != null) {
+            connectionProperties.setProperty("connectTimeout", String.valueOf(snowflakeConfig.getConnectionTimeout().toMillis()));
         }
 
         return new DriverConnectionFactory(new Driver(), config.getConnectionUrl(), connectionProperties);
