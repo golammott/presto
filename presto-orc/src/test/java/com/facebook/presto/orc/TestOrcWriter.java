@@ -18,19 +18,24 @@ import com.facebook.presto.orc.metadata.Footer;
 import com.facebook.presto.orc.metadata.Stream;
 import com.facebook.presto.orc.metadata.StripeFooter;
 import com.facebook.presto.orc.metadata.StripeInformation;
+import com.facebook.presto.orc.stream.OrcDataOutput;
 import com.facebook.presto.orc.stream.OrcInputStream;
 import com.facebook.presto.spi.Page;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import io.airlift.slice.OutputStreamSliceOutput;
 import io.airlift.slice.Slices;
 import io.airlift.units.DataSize;
+import org.openjdk.jol.info.ClassLayout;
 import org.testng.annotations.Test;
 
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.List;
 import java.util.Optional;
 
 import static com.facebook.presto.memory.context.AggregatedMemoryContext.newSimpleAggregatedMemoryContext;
@@ -44,6 +49,7 @@ import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static io.airlift.testing.Assertions.assertGreaterThanOrEqual;
 import static io.airlift.units.DataSize.Unit.MEGABYTE;
 import static java.lang.Math.toIntExact;
+import static java.util.Objects.requireNonNull;
 import static org.testng.Assert.assertFalse;
 
 public class TestOrcWriter
@@ -118,6 +124,129 @@ public class TestOrcWriter
                     }
                 }
             }
+        }
+    }
+
+    @Test
+    public void testVerifyIllegalStateException()
+            throws IOException
+    {
+        for (OrcWriteValidationMode validationMode : OrcWriteValidationMode.values()) {
+            TempFile tempFile = new TempFile();
+            OrcWriter writer = new OrcWriter(
+                    new MockOrcDataSink(new FileOutputStream(tempFile.getFile())),
+                    ImmutableList.of("test1", "test2", "test3", "test4", "test5"),
+                    ImmutableList.of(VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR),
+                    ORC,
+                    NONE,
+                    new OrcWriterOptions()
+                            .withStripeMinSize(new DataSize(0, MEGABYTE))
+                            .withStripeMaxSize(new DataSize(32, MEGABYTE))
+                            .withStripeMaxRowCount(10)
+                            .withRowGroupMaxRowCount(ORC_ROW_GROUP_SIZE)
+                            .withDictionaryMaxMemory(new DataSize(32, MEGABYTE)),
+                    ImmutableMap.of(),
+                    HIVE_STORAGE_TIME_ZONE,
+                    true,
+                    validationMode,
+                    new OrcWriterStats());
+
+            // write down some data with unsorted streams
+            String[] data = new String[] {"a", "bbbbb", "ccc", "dd", "eeee"};
+            Block[] blocks = new Block[data.length];
+            int entries = 65536;
+            BlockBuilder blockBuilder = VARCHAR.createBlockBuilder(null, entries);
+            for (int i = 0; i < data.length; i++) {
+                byte[] bytes = data[i].getBytes();
+                for (int j = 0; j < entries; j++) {
+                    // force to write different data
+                    bytes[0] = (byte) ((bytes[0] + 1) % 128);
+                    blockBuilder.writeBytes(Slices.wrappedBuffer(bytes, 0, bytes.length), 0, bytes.length);
+                    blockBuilder.closeEntry();
+                }
+                blocks[i] = blockBuilder.build();
+                blockBuilder = blockBuilder.newBlockBuilderLike(null);
+            }
+
+            try {
+                writer.write(new Page(blocks));
+            }
+            catch (IOException e) {
+                System.out.println("hit it");
+                writer.close();
+                throw e;
+            }
+
+
+
+            // read the footer and verify the streams are ordered by size
+            DataSize dataSize = new DataSize(1, MEGABYTE);
+            OrcDataSource orcDataSource = new FileOrcDataSource(tempFile.getFile(), dataSize, dataSize, dataSize, true);
+            Footer footer = new OrcReader(orcDataSource, ORC, dataSize, dataSize, dataSize).getFooter();
+
+            for (StripeInformation stripe : footer.getStripes()) {
+                // read the footer
+                byte[] tailBuffer = new byte[toIntExact(stripe.getFooterLength())];
+                orcDataSource.readFully(stripe.getOffset() + stripe.getIndexLength() + stripe.getDataLength(), tailBuffer);
+                try (InputStream inputStream = new OrcInputStream(orcDataSource.getId(), Slices.wrappedBuffer(tailBuffer).getInput(), Optional.empty(), newSimpleAggregatedMemoryContext(), tailBuffer.length)) {
+                    StripeFooter stripeFooter = ORC.createMetadataReader().readStripeFooter(footer.getTypes(), inputStream);
+
+                    int size = 0;
+                    boolean dataStreamStarted = false;
+                    for (Stream stream : stripeFooter.getStreams()) {
+                        if (isIndexStream(stream)) {
+                            assertFalse(dataStreamStarted);
+                            continue;
+                        }
+                        dataStreamStarted = true;
+                        // verify sizes in order
+                        assertGreaterThanOrEqual(stream.getLength(), size);
+                        size = stream.getLength();
+                    }
+                }
+            }
+        }
+    }
+
+
+    public class MockOrcDataSink
+            implements OrcDataSink
+    {
+        //private static final int INSTANCE_SIZE = ClassLayout.parseClass(com.facebook.presto.orc.OutputStreamOrcDataSink.class).instanceSize();
+        private final int INSTANCE_SIZE = ClassLayout.parseClass(com.facebook.presto.orc.OutputStreamOrcDataSink.class).instanceSize();
+
+        private final OutputStreamSliceOutput output;
+
+        public MockOrcDataSink(OutputStream outputStream)
+        {
+            this.output = new OutputStreamSliceOutput(requireNonNull(outputStream, "outputStream is null"));
+        }
+
+        @Override
+        public long size()
+        {
+            return output.longSize();
+        }
+
+        @Override
+        public long getRetainedSizeInBytes()
+        {
+            return INSTANCE_SIZE + output.getRetainedSize();
+        }
+
+        @Override
+        public void write(List<OrcDataOutput> outputData)
+                throws IOException
+        {
+            throw new IOException("Dummy exception from mocked instance");
+            //outputData.forEach(data -> data.writeData(output));
+        }
+
+        @Override
+        public void close()
+                throws IOException
+        {
+            output.close();
         }
     }
 }
