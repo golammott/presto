@@ -28,7 +28,6 @@ import com.google.common.collect.ImmutableMap;
 import io.airlift.slice.OutputStreamSliceOutput;
 import io.airlift.slice.Slices;
 import io.airlift.units.DataSize;
-import org.openjdk.jol.info.ClassLayout;
 import org.testng.annotations.Test;
 
 import java.io.FileOutputStream;
@@ -127,7 +126,7 @@ public class TestOrcWriter
         }
     }
 
-    @Test
+    @Test(expectedExceptions = IllegalStateException.class)
     public void testVerifyIllegalStateException()
             throws IOException
     {
@@ -135,8 +134,8 @@ public class TestOrcWriter
             TempFile tempFile = new TempFile();
             OrcWriter writer = new OrcWriter(
                     new MockOrcDataSink(new FileOutputStream(tempFile.getFile())),
-                    ImmutableList.of("test1", "test2", "test3", "test4", "test5"),
-                    ImmutableList.of(VARCHAR, VARCHAR, VARCHAR, VARCHAR, VARCHAR),
+                    ImmutableList.of("test1"),
+                    ImmutableList.of(VARCHAR),
                     ORC,
                     NONE,
                     new OrcWriterOptions()
@@ -151,59 +150,23 @@ public class TestOrcWriter
                     validationMode,
                     new OrcWriterStats());
 
-            // write down some data with unsorted streams
-            String[] data = new String[] {"a", "bbbbb", "ccc", "dd", "eeee"};
-            Block[] blocks = new Block[data.length];
             int entries = 65536;
             BlockBuilder blockBuilder = VARCHAR.createBlockBuilder(null, entries);
-            for (int i = 0; i < data.length; i++) {
-                byte[] bytes = data[i].getBytes();
-                for (int j = 0; j < entries; j++) {
-                    // force to write different data
-                    bytes[0] = (byte) ((bytes[0] + 1) % 128);
-                    blockBuilder.writeBytes(Slices.wrappedBuffer(bytes, 0, bytes.length), 0, bytes.length);
-                    blockBuilder.closeEntry();
-                }
-                blocks[i] = blockBuilder.build();
-                blockBuilder = blockBuilder.newBlockBuilderLike(null);
+            byte[] bytes = "dummyString".getBytes();
+            for (int j = 0; j < entries; j++) {
+                // force to write different data
+                bytes[0] = (byte) ((bytes[0] + 1) % 128);
+                blockBuilder.writeBytes(Slices.wrappedBuffer(bytes, 0, bytes.length), 0, bytes.length);
+                blockBuilder.closeEntry();
             }
+            Block[] blocks = new Block[] { blockBuilder.build() };
 
             try {
+                // Throw IOException after first flush
                 writer.write(new Page(blocks));
             }
             catch (IOException e) {
-                System.out.println("hit it");
                 writer.close();
-                throw e;
-            }
-
-
-
-            // read the footer and verify the streams are ordered by size
-            DataSize dataSize = new DataSize(1, MEGABYTE);
-            OrcDataSource orcDataSource = new FileOrcDataSource(tempFile.getFile(), dataSize, dataSize, dataSize, true);
-            Footer footer = new OrcReader(orcDataSource, ORC, dataSize, dataSize, dataSize).getFooter();
-
-            for (StripeInformation stripe : footer.getStripes()) {
-                // read the footer
-                byte[] tailBuffer = new byte[toIntExact(stripe.getFooterLength())];
-                orcDataSource.readFully(stripe.getOffset() + stripe.getIndexLength() + stripe.getDataLength(), tailBuffer);
-                try (InputStream inputStream = new OrcInputStream(orcDataSource.getId(), Slices.wrappedBuffer(tailBuffer).getInput(), Optional.empty(), newSimpleAggregatedMemoryContext(), tailBuffer.length)) {
-                    StripeFooter stripeFooter = ORC.createMetadataReader().readStripeFooter(footer.getTypes(), inputStream);
-
-                    int size = 0;
-                    boolean dataStreamStarted = false;
-                    for (Stream stream : stripeFooter.getStreams()) {
-                        if (isIndexStream(stream)) {
-                            assertFalse(dataStreamStarted);
-                            continue;
-                        }
-                        dataStreamStarted = true;
-                        // verify sizes in order
-                        assertGreaterThanOrEqual(stream.getLength(), size);
-                        size = stream.getLength();
-                    }
-                }
             }
         }
     }
@@ -212,8 +175,6 @@ public class TestOrcWriter
     public class MockOrcDataSink
             implements OrcDataSink
     {
-        //private static final int INSTANCE_SIZE = ClassLayout.parseClass(com.facebook.presto.orc.OutputStreamOrcDataSink.class).instanceSize();
-        private final int INSTANCE_SIZE = ClassLayout.parseClass(com.facebook.presto.orc.OutputStreamOrcDataSink.class).instanceSize();
 
         private final OutputStreamSliceOutput output;
 
@@ -231,7 +192,7 @@ public class TestOrcWriter
         @Override
         public long getRetainedSizeInBytes()
         {
-            return INSTANCE_SIZE + output.getRetainedSize();
+            return output.getRetainedSize();
         }
 
         @Override
@@ -239,7 +200,6 @@ public class TestOrcWriter
                 throws IOException
         {
             throw new IOException("Dummy exception from mocked instance");
-            //outputData.forEach(data -> data.writeData(output));
         }
 
         @Override
